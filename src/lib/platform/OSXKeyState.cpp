@@ -567,6 +567,8 @@ kern_return_t OSXKeyState::postHIDVirtualKey(uint8_t virtualKey, bool postDown)
 
   if (driver) {
     if (isModifier(virtualKey)) {
+      // Always use the actual key code to prevent the input method from interpreting an uninitialized key 0 as the letter 'a'.
+      event.key.keyCode = virtualKey;
       result =
           IOHIDPostEvent(driver, NX_FLAGSCHANGED, {0, 0}, &event, kNXEventDataVersion, getKeyboardEventFlags(), true);
     } else {
