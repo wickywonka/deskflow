@@ -147,6 +147,10 @@ deskflow::Screen *ClientApp::openClientScreen()
   getEvents()->addHandler(EventTypes::ScreenError, screen->getEventTarget(), [this](const auto &) {
     handleScreenError();
   });
+  getEvents()->addHandler(EventTypes::ScreenSuspend, screen->getEventTarget(), [this](const auto &) {
+    handleSuspend();
+  });
+  getEvents()->addHandler(EventTypes::ScreenResume, screen->getEventTarget(), [this](const auto &) { handleResume(); });
   return screen;
 }
 
@@ -154,15 +158,27 @@ void ClientApp::closeClientScreen(deskflow::Screen *screen)
 {
   if (screen != nullptr) {
     getEvents()->removeHandler(EventTypes::ScreenError, screen->getEventTarget());
+    getEvents()->removeHandler(EventTypes::ScreenSuspend, screen->getEventTarget());
+    getEvents()->removeHandler(EventTypes::ScreenResume, screen->getEventTarget());
     delete screen;
   }
 }
 
 void ClientApp::handleClientRestart(const Event &, EventQueueTimer *timer)
 {
+  if (timer != m_restartTimer) {
+    return;
+  }
+
   // discard old timer
   getEvents()->deleteTimer(timer);
   getEvents()->removeHandler(EventTypes::Timer, timer);
+  m_restartTimer = nullptr;
+
+  if (m_suspended) {
+    LOG_DEBUG("skip restart while suspended");
+    return;
+  }
 
   // reconnect
   startClient();
@@ -170,9 +186,19 @@ void ClientApp::handleClientRestart(const Event &, EventQueueTimer *timer)
 
 void ClientApp::scheduleClientRestart(double retryTime)
 {
+  if (m_suspended) {
+    LOG_DEBUG("skip scheduling restart while suspended");
+    return;
+  }
+
+  if (m_restartTimer != nullptr) {
+    return;
+  }
+
   // install a timer and handler to retry later
   LOG_DEBUG("retry in %.0f seconds", retryTime);
-  EventQueueTimer *timer = getEvents()->newOneShotTimer(retryTime, nullptr);
+  m_restartTimer = getEvents()->newOneShotTimer(retryTime, nullptr);
+  EventQueueTimer *timer = m_restartTimer;
   getEvents()->addHandler(EventTypes::Timer, timer, [this, timer](const auto &e) { handleClientRestart(e, timer); });
 }
 
@@ -232,6 +258,26 @@ void ClientApp::handleClientDisconnected()
   LOG_IPC("disconnected from server");
   if (!m_suspended) {
     scheduleClientRestart(s_retryTime);
+  }
+}
+
+void ClientApp::handleSuspend()
+{
+  if (!m_suspended) {
+    LOG_INFO("suspend");
+    m_suspended = true;
+    cancelClientRestartTimer();
+  }
+}
+
+void ClientApp::handleResume()
+{
+  if (m_suspended) {
+    LOG_INFO("resume");
+    m_suspended = false;
+    if (m_client != nullptr && !m_client->isConnected() && !m_client->isConnecting()) {
+      scheduleClientRestart(s_retryTime);
+    }
   }
 }
 
@@ -313,10 +359,21 @@ bool ClientApp::startClient()
 
 void ClientApp::stopClient()
 {
+  cancelClientRestartTimer();
+
   closeClient(m_client);
   closeClientScreen(m_clientScreen);
   m_client = nullptr;
   m_clientScreen = nullptr;
+}
+
+void ClientApp::cancelClientRestartTimer()
+{
+  if (m_restartTimer != nullptr) {
+    getEvents()->deleteTimer(m_restartTimer);
+    getEvents()->removeHandler(EventTypes::Timer, m_restartTimer);
+    m_restartTimer = nullptr;
+  }
 }
 
 int ClientApp::mainLoop()

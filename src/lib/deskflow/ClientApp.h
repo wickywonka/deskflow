@@ -60,6 +60,8 @@ public:
   void handleClientFailed(const Event &e);
   void handleClientRefused(const Event &e);
   void handleClientDisconnected();
+  void handleSuspend();
+  void handleResume();
   Client *openClient(const std::string &name, const NetworkAddress &address, deskflow::Screen *screen);
   void closeClient(Client *client);
   bool startClient();
@@ -82,10 +84,12 @@ private:
   ISocketFactory *getSocketFactory() const;
   NetworkAddress &getCurrentServerAddress();
   void tryNextServer();
+  void cancelClientRestartTimer();
 
   bool m_suspended = false;
   Client *m_client = nullptr;
   deskflow::Screen *m_clientScreen = nullptr;
+  EventQueueTimer *m_restartTimer = nullptr;
   QList<NetworkAddress> m_serverAddresses;
   size_t m_currentServerIndex = 0;
   size_t m_lastServerAddressIndex = 0;
